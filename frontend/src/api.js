@@ -11,21 +11,21 @@ export const fetchchatsapi=async(conversationId)=>{
       return  res.json()
 }
 
-export const sendmessageapi= async(text, conversationId)=>{
+export const sendmessageapi= async(text, conversationId, useRag = false)=>{
      const res = await fetch(`${base}/chat`,{
       method  :'POST',
       headers:{ "Content-Type": "application/json"},
-      body: JSON.stringify({message:text, conversation_id:conversationId})
+      body: JSON.stringify({message:text, conversation_id:conversationId, use_rag: useRag})
     })
     if(!res.ok){
       throw new Error('Failed to send message')
     }
 }
-export const sendmessagestreamapi = async (text, conversationId, signal) => {
+export const sendmessagestreamapi = async (text, conversationId, signal, useRag = false) => {
   const res = await fetch(`${base}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: text, conversation_id: conversationId }),
+    body: JSON.stringify({ message: text, conversation_id: conversationId, use_rag: useRag }),
     signal
   });
   if(!res.ok){
@@ -77,6 +77,49 @@ export const deleteConversation = async (conversationId) => {
   
   if (!res.ok) {
     throw new Error('Failed to delete conversation');
+  }
+  
+  return res.json();
+};
+
+export const uploadDocument = async (conversationId, file, fileType = null) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('conversation_id', conversationId);
+  if (fileType) {
+    formData.append('file_type', fileType);
+  }
+  
+  const res = await fetch(`${base}/documents/upload`, {
+    method: 'POST',
+    body: formData
+  });
+  
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Failed to upload document' }));
+    throw new Error(error.detail || 'Failed to upload document');
+  }
+  
+  return res.json();
+};
+
+export const getDocuments = async (conversationId) => {
+  const res = await fetch(`${base}/documents/${encodeURIComponent(conversationId)}`);
+  
+  if (!res.ok) {
+    throw new Error('Failed to fetch documents');
+  }
+  
+  return res.json();
+};
+
+export const deleteDocument = async (documentId, conversationId) => {
+  const res = await fetch(`${base}/documents/${encodeURIComponent(documentId)}?conversation_id=${encodeURIComponent(conversationId)}`, {
+    method: 'DELETE'
+  });
+  
+  if (!res.ok) {
+    throw new Error('Failed to delete document');
   }
   
   return res.json();

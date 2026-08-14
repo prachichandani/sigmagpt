@@ -3,6 +3,9 @@ from db.mongo import chats_collection
 from fastapi import Request
 from core.config import GEMINI_API_KEY, MEMORY_LIMIT
 from datetime import datetime, timezone
+from typing import List, Dict, Optional
+from ai.rag import hybrid_search
+from ai.reranker import rerank_chunks
 
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
@@ -57,38 +60,215 @@ def get_recent_messages(limit: int, conversation_id: str):
     return messages
 
 
+def rewrite_query(user_query: str, conversation_id: str) -> str:
+    """
+    Rewrite follow-up questions into standalone retrieval queries using chat history.
+    """
+    if not user_query or not user_query.strip():
+        return user_query
 
-def get_ai_reply(user_message: str, conversation_id: str) -> str:
+    history = get_recent_messages(MEMORY_LIMIT, conversation_id)
+
+    if not history:
+        return user_query
+
+    conversation_context = []
+
+    for msg in history[-MEMORY_LIMIT:]:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        if content:
+            conversation_context.append(f"{role}: {content[:1000]}")
+
+    if not conversation_context:
+        return user_query
+
+    context_str = "\n".join(conversation_context)
+
+    prompt = f"""
+You are a query rewriting module for a RAG system.
+
+Your task:
+- Rewrite the current user question into a standalone retrieval query.
+- Use conversation history only if needed.
+- If the current question is already clear and standalone, return it unchanged.
+- Do not answer the question.
+- Do not add explanations.
+- Return only the rewritten query.
+
+Conversation history:
+{context_str}
+
+Current user question:
+{user_query}
+
+Standalone retrieval query:
+""".strip()
+
+    try:
+        response = model.generate_content(prompt)
+
+        rewritten_query = getattr(response, "text", "").strip()
+
+        if not rewritten_query:
+            return user_query
+
+        if len(rewritten_query) < 3:
+            return user_query
+
+        if len(rewritten_query) > 500:
+            return user_query
+
+        return rewritten_query
+
+    except Exception as e:
+        print(f"Query rewriting error: {e}")
+        return user_query
+
+def get_ai_reply(
+    user_message: str,
+    conversation_id: str,
+    use_rag: bool = False
+) -> Dict:
+    """
+    Get AI reply with optional RAG context injection.
+    
+    Args:
+        user_message: User's message
+        conversation_id: Conversation ID
+        use_rag: Whether to use RAG for context retrieval
+    
+    Returns:
+        Dict with 'reply' and optional 'sources'
+    """
     history = get_recent_messages(MEMORY_LIMIT, conversation_id)
     
-    # Format conversation for Gemini
-    conversation = []
-    for msg in history:
-        conversation.append(f"{msg['role']}: {msg['content']}")
-    conversation.append(f"user: {user_message}")
+    if use_rag:
+        # Rewrite query for better retrieval
+        rewritten_query = rewrite_query(user_message, conversation_id)
+        
+        # Retrieve and rerank chunks
+        retrieved_chunks = hybrid_search(rewritten_query, conversation_id)
+        reranked_chunks = rerank_chunks(rewritten_query, retrieved_chunks)
+        
+        # Build context from chunks
+        context_parts = []
+        sources = []
+        
+        for idx, chunk in enumerate(reranked_chunks):
+            context_parts.append(f"[Source {idx + 1}]: {chunk['text']}")
+            sources.append({
+                "filename": chunk["metadata"].get("filename", "Unknown"),
+                "page_number": chunk["metadata"].get("page_number"),
+                "chunk_index": chunk["metadata"].get("chunk_index"),
+                "score": chunk.get("rerank_score", chunk.get("score", 0))
+            })
+        
+        context_str = "\n\n".join(context_parts)
+        
+        # Build RAG prompt
+        prompt = (
+            "You are a helpful assistant that answers questions based on the provided context from uploaded documents.\n\n"
+            f"Context from documents:\n{context_str}\n\n"
+            f"Question: {user_message}\n\n"
+            "Instructions:\n"
+            "- Answer ONLY using the provided context\n"
+            "- If the answer is not in the context, say 'I couldn't find this information in the uploaded documents'\n"
+            "- Include source citations in your answer using [Source X] format\n"
+            "- Be concise and accurate\n"
+        )
+    else:
+        # Normal chat without RAG
+        conversation = []
+        for msg in history:
+            conversation.append(f"{msg['role']}: {msg['content']}")
+        conversation.append(f"user: {user_message}")
+        
+        prompt = "\n".join(conversation)
+        sources = []
     
-    full_prompt = "\n".join(conversation)
+    try:
+        response = model.generate_content(prompt)
+        reply = response.text if response.text else "I apologize, but I couldn't generate a response."
+        
+        result = {"reply": reply}
+        
+        if use_rag and sources:
+            result["sources"] = sources
+        
+        return result
     
-    response = model.generate_content(full_prompt)
-    return response.text
+    except Exception as e:
+        print(f"Error generating reply: {e}")
+        return {"reply": f"Error: {str(e)}", "sources": [] if use_rag else None}
     
 
-async def stream_ai_reply(user_message: str, request: Request, conversation_id: str):
+async def stream_ai_reply(
+    user_message: str,
+    request: Request,
+    conversation_id: str,
+    use_rag: bool = False
+):
+    """
+    Stream AI reply with optional RAG context injection.
+    
+    Args:
+        user_message: User's message
+        request: FastAPI Request object
+        conversation_id: Conversation ID
+        use_rag: Whether to use RAG for context retrieval
+    """
     history = get_recent_messages(MEMORY_LIMIT, conversation_id)
+    sources = []
     
-    # Format conversation for Gemini
-    conversation = []
-    for msg in history:
-        conversation.append(f"{msg['role']}: {msg['content']}")
-    conversation.append(f"user: {user_message}")
-    
-    full_prompt = "\n".join(conversation)
+    if use_rag:
+        # Rewrite query for better retrieval
+        rewritten_query = rewrite_query(user_message, conversation_id)
+        
+        # Retrieve and rerank chunks
+        retrieved_chunks = hybrid_search(rewritten_query, conversation_id)
+        reranked_chunks = rerank_chunks(rewritten_query, retrieved_chunks)
+        
+        # Build context from chunks
+        context_parts = []
+        
+        for idx, chunk in enumerate(reranked_chunks):
+            context_parts.append(f"[Source {idx + 1}]: {chunk['text']}")
+            sources.append({
+                "filename": chunk["metadata"].get("filename", "Unknown"),
+                "page_number": chunk["metadata"].get("page_number"),
+                "chunk_index": chunk["metadata"].get("chunk_index"),
+                "score": chunk.get("rerank_score", chunk.get("score", 0))
+            })
+        
+        context_str = "\n\n".join(context_parts)
+        
+        # Build RAG prompt
+        prompt = (
+            "You are a helpful assistant that answers questions based on the provided context from uploaded documents.\n\n"
+            f"Context from documents:\n{context_str}\n\n"
+            f"Question: {user_message}\n\n"
+            "Instructions:\n"
+            "- Answer ONLY using the provided context\n"
+            "- If the answer is not in the context, say 'I couldn't find this information in the uploaded documents'\n"
+            "- Include source citations in your answer using [Source X] format\n"
+            "- Be concise and accurate\n"
+        )
+    else:
+        # Normal chat without RAG
+        conversation = []
+        for msg in history:
+            conversation.append(f"{msg['role']}: {msg['content']}")
+        conversation.append(f"user: {user_message}")
+        
+        prompt = "\n".join(conversation)
     
     full_reply = ""
     
     try:
         # Generate streaming response
-        response = model.generate_content(full_prompt, stream=True)
+        response = model.generate_content(prompt, stream=True)
         
         for chunk in response:
             if await request.is_disconnected():
@@ -101,6 +281,11 @@ async def stream_ai_reply(user_message: str, request: Request, conversation_id: 
                 yield token
         
         yield "\n"
+        
+        # Send sources as metadata if RAG is enabled
+        if use_rag and sources:
+            import json
+            yield f"__SOURCES__:{json.dumps(sources)}\n"
         
         # Save to database
         if full_reply.strip():

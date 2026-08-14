@@ -6,6 +6,8 @@ import ChatList from './ChatList'
 import ChatInput from './ChatInput'
 import UseChats from './UseChats'
 import ConversationList from './ConversationList'
+import DocumentUpload from './DocumentUpload'
+import DocumentList from './DocumentList'
 
 function App() {
   const bottomRef = useRef()
@@ -21,7 +23,12 @@ function App() {
     stopgenerating,
     createConversation,
     deleteConversation,
-    switchConversation
+    switchConversation,
+    documents,
+    useRag,
+    setUseRag,
+    handleDocumentUpload,
+    handleDocumentDelete
   } = UseChats()
 
   useEffect(() => {
@@ -38,6 +45,18 @@ function App() {
           onDeleteConversation={deleteConversation}
           onSwitchConversation={switchConversation}
         />
+        {activeConversationId && (
+          <>
+            <DocumentUpload
+              conversationId={activeConversationId}
+              onUploadSuccess={handleDocumentUpload}
+            />
+            <DocumentList
+              documents={documents}
+              onDeleteDocument={handleDocumentDelete}
+            />
+          </>
+        )}
       </aside>
 
       <main className="chat-container">
@@ -57,6 +76,8 @@ function App() {
             onclear={clearconversation}
             onstop={stopgenerating}
             loading={loading}
+            useRag={useRag}
+            onToggleRag={() => setUseRag(!useRag)}
           />
         </footer>
       </main>

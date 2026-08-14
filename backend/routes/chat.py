@@ -14,6 +14,7 @@ router=APIRouter()
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str
+    use_rag: bool = False
 
 class ConversationResponse(BaseModel):
     _id: str
@@ -45,6 +46,7 @@ def get_chats(conversation_id: str):
 def chat(data: ChatRequest):
     user_message = data.message
     conversation_id = data.conversation_id
+    use_rag = data.use_rag
     print('working')
     
     # Check if this is the first message and update title if needed
@@ -63,7 +65,8 @@ def chat(data: ChatRequest):
         'created_at':datetime.now(timezone.utc)
     })
 
-    ai_reply = get_ai_reply(user_message, ObjectId(conversation_id))
+    result = get_ai_reply(user_message, str(conversation_id), use_rag)
+    ai_reply = result.get("reply", "")
 
     chats_collection.insert_one({
         'role':'assistant',
@@ -71,16 +74,23 @@ def chat(data: ChatRequest):
         'conversation_id': ObjectId(conversation_id),
         'created_at':datetime.now(timezone.utc)
     })
-    return {
+    
+    response = {
         "role": "assistant",
-        "reply":ai_reply,
-        'created_at':datetime.now(timezone.utc)
+        "reply": ai_reply,
+        'created_at': datetime.now(timezone.utc)
     }
+    
+    if use_rag and "sources" in result:
+        response["sources"] = result["sources"]
+    
+    return response
 
 @router.post('/chat/stream')
 def chat_stream(data:ChatRequest,request:Request):
     user_message=data.message
     conversation_id=data.conversation_id
+    use_rag=data.use_rag
     
     # Check if this is the first message and update title if needed
     conversation = conversations_collection.find_one({"_id": ObjectId(conversation_id)})
@@ -98,7 +108,7 @@ def chat_stream(data:ChatRequest,request:Request):
         'created_at':datetime.now(timezone.utc)
     })
     return StreamingResponse(
-        stream_ai_reply(user_message,request,ObjectId(conversation_id)),
+        stream_ai_reply(user_message,request,str(conversation_id),use_rag),
         media_type='text/plain'
     )
 

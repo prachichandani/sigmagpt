@@ -1,29 +1,21 @@
-import google.generativeai as genai
+from sentence_transformers import SentenceTransformer
 import numpy as np
 from typing import List
-from core.config import GEMINI_API_KEY, EMBEDDING_MODEL_NAME
+from core.config import EMBEDDING_MODEL_NAME
 
 class EmbeddingGenerator:
     def __init__(self):
-        genai.configure(api_key=GEMINI_API_KEY)
-        self.model = EMBEDDING_MODEL_NAME
+        self.model = SentenceTransformer(EMBEDDING_MODEL_NAME)
     
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for a single text"""
-        result = genai.embed_content(
-            model=self.model,
-            content=text,
-            task_type="retrieval_document"
-        )
-        return result['embedding']
+        embedding = self.model.encode(text, convert_to_numpy=True)
+        return embedding.tolist()
     
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts"""
-        embeddings = []
-        for text in texts:
-            embedding = self.generate_embedding(text)
-            embeddings.append(embedding)
-        return embeddings
+        embeddings = self.model.encode(texts, convert_to_numpy=True)
+        return embeddings.tolist()
     
     def calculate_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
         """Calculate cosine similarity between two embeddings"""

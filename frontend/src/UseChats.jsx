@@ -1,5 +1,5 @@
 import { useState ,useEffect,useRef} from 'react'
-import {fetchchatsapi,sendmessageapi,clearconversationapi,sendmessagestreamapi,createConversation,getConversations,deleteConversation} from './api'
+import {fetchchatsapi,sendmessageapi,clearconversationapi,sendmessagestreamapi,createConversation,getConversations,deleteConversation,getDocuments,deleteDocument} from './api'
 export default function UseChats(){
     const [chats,setChats]= useState([]);
     const [conversations,setConversations]= useState([]);
@@ -7,6 +7,8 @@ export default function UseChats(){
     const [error, setError]= useState(null);
     const [loading,setLoading]=useState(false);
     const abortRef=useRef(null);
+    const [documents, setDocuments] = useState([]);
+    const [useRag, setUseRag] = useState(false);
 
     const fetchchats=async()=>{
     try{
@@ -42,8 +44,19 @@ export default function UseChats(){
   useEffect(()=>{
     if(activeConversationId){
       fetchchats()
+      fetchDocuments()
     }
   },[activeConversationId])
+
+  const fetchDocuments = async () => {
+    if (!activeConversationId) return
+    try {
+      const data = await getDocuments(activeConversationId)
+      setDocuments(data.data || [])
+    } catch (err) {
+      console.error('Failed to fetch documents:', err)
+    }
+  }
 
   const sendmessage=async(text)=>{
     if(!activeConversationId){
@@ -52,7 +65,7 @@ export default function UseChats(){
     }
     try{
       setLoading(true); setError(null);
-      await sendmessageapi(text, activeConversationId)
+      await sendmessageapi(text, activeConversationId, useRag)
      await fetchchats();
      await fetchConversations(); // Refresh to get updated title and move to top
     }catch(err){
@@ -81,11 +94,12 @@ export default function UseChats(){
       {_id: assistantId, role: "assistant", reply: '' }
     ]);
 
-    const stream = await sendmessagestreamapi(text, activeConversationId, abortRef.current.signal);
+    const stream = await sendmessagestreamapi(text, activeConversationId, abortRef.current.signal, useRag);
     const reader = stream.getReader();
     const decoder = new TextDecoder();
 
     let aiReply = "";
+    let sources = null;
 
 
     while (true) {
@@ -93,12 +107,25 @@ export default function UseChats(){
       if (done) break;
 
       const chunk = decoder.decode(value);
-      aiReply += chunk;
-
+      
+      // Check for sources metadata
+      if (chunk.includes('__SOURCES__:')) {
+        const parts = chunk.split('__SOURCES__:');
+        aiReply += parts[0];
+        if (parts[1]) {
+          try {
+            sources = JSON.parse(parts[1].trim());
+          } catch (e) {
+            console.error('Failed to parse sources:', e);
+          }
+        }
+      } else {
+        aiReply += chunk;
+      }
 
       setChats((prev)=>(
         prev.map((m)=>(
-          m._id===assistantId?{...m,reply:aiReply}:m
+          m._id===assistantId?{...m,reply:aiReply, sources: sources}:m
         ))
       ))
     }
@@ -170,6 +197,19 @@ export default function UseChats(){
     }
   }
 
+  const handleDocumentUpload = async (uploadedDoc) => {
+    setDocuments(prev => [...prev, uploadedDoc])
+  }
+
+  const handleDocumentDelete = async (documentId) => {
+    try {
+      await deleteDocument(documentId, activeConversationId)
+      setDocuments(prev => prev.filter(doc => doc._id !== documentId))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const stopgenerating=()=>{
     abortRef.current?.abort();
   }
@@ -186,6 +226,11 @@ export default function UseChats(){
         createConversation: handleCreateConversation,
         deleteConversation: handleDeleteConversation,
         switchConversation,
-        fetchConversations
+        fetchConversations,
+        documents,
+        useRag,
+        setUseRag,
+        handleDocumentUpload,
+        handleDocumentDelete
     }
 }
