@@ -1,6 +1,9 @@
+import logging
 from typing import List, Dict, Optional
 from sentence_transformers import CrossEncoder
 from core.config import FINAL_CONTEXT_TOP_K, RERANKER_MODEL_NAME
+
+logger = logging.getLogger(__name__)
 
 
 class Reranker:
@@ -18,7 +21,7 @@ class Reranker:
             self.model_name = model_name or RERANKER_MODEL_NAME
             self.model = CrossEncoder(self.model_name)
         except Exception as e:
-            raise RuntimeError(f"Failed to load cross-encoder model: {str(e)}")
+            raise RuntimeError(f"Failed to load cross-encoder model: {str(e)}") from e
 
     def rerank(
         self,
@@ -43,7 +46,7 @@ class Reranker:
         try:
             rerank_scores = self.model.predict(query_doc_pairs)
         except Exception as e:
-            print(f"Reranking error: {str(e)}")
+            logger.exception("Reranking failed, falling back to original order: %s", e)
 
             for chunk in safe_chunks:
                 chunk["rerank_score"] = 0.0

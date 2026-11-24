@@ -197,8 +197,9 @@ export default function UseChats(){
     }
   }
 
-  const handleDocumentUpload = async (uploadedDoc) => {
-    setDocuments(prev => [...prev, uploadedDoc])
+  const handleDocumentUpload = async () => {
+    // Re-fetch so the list gets full records (_id, conversation_id) from the server
+    await fetchDocuments()
   }
 
   const handleDocumentDelete = async (documentId) => {

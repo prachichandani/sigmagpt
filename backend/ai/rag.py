@@ -117,7 +117,7 @@ def process_document(
     ids = []
 
     for idx, chunk in enumerate(chunks):
-        metadatas.append({
+        metadata = {
             "conversation_id": conversation_id,
             "document_id": document_id,
             "filename": filename,
@@ -127,7 +127,9 @@ def process_document(
             "chunk_type": chunk.get("chunk_type"),
             "chunk_size": chunk.get("chunk_size"),
             "chunk_overlap": chunk.get("chunk_overlap")
-        })
+        }
+        # ChromaDB rejects None metadata values (e.g. page_number for TXT files)
+        metadatas.append({k: v for k, v in metadata.items() if v is not None})
 
         ids.append(f"{document_id}_chunk_{idx}")
 

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Query
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from typing import Optional
 from ai.rag import process_document, delete_document, get_conversation_documents
 import os
@@ -85,7 +86,7 @@ async def list_documents(conversation_id: str):
             status_code=200,
             content={
                 "success": True,
-                "data": documents
+                "data": jsonable_encoder(documents)
             }
         )
 

@@ -1,18 +1,12 @@
-import { deleteDocument } from './api'
-
 function DocumentList({ documents, onDeleteDocument }) {
   const handleDelete = async (documentId) => {
     if (!confirm('Are you sure you want to delete this document?')) {
       return
     }
 
-    try {
-      await deleteDocument(documentId, documents[0]?.conversation_id)
-      if (onDeleteDocument) {
-        onDeleteDocument(documentId)
-      }
-    } catch (err) {
-      alert('Failed to delete document: ' + err.message)
+    // UseChats.handleDocumentDelete calls the API and updates the list
+    if (onDeleteDocument) {
+      await onDeleteDocument(documentId)
     }
   }
 

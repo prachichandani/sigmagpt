@@ -1,11 +1,29 @@
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes.chat import router as chat_router
 from routes.documents import router as documents_router
+from ai.reranker import get_reranker
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-app=FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load the cross-encoder once at startup so the first chat isn't slow
+    try:
+        get_reranker()
+        logger.info("Reranker model loaded")
+    except Exception:
+        logger.exception("Could not preload reranker; it will retry on first RAG request")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 

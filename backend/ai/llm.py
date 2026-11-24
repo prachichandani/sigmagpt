@@ -1,4 +1,6 @@
+import asyncio
 import google.generativeai as genai
+from bson import ObjectId
 from db.mongo import chats_collection
 from fastapi import Request
 from core.config import GEMINI_API_KEY, MEMORY_LIMIT
@@ -45,7 +47,7 @@ def generate_conversation_title(first_message: str) -> str:
 
         
 def get_recent_messages(limit: int, conversation_id: str):
-    query = {'conversation_id': conversation_id}
+    query = {'conversation_id': ObjectId(conversation_id)}
     
     chats=( chats_collection.find(query,{'_id':0})
            .sort('created_at',-1)
@@ -157,7 +159,7 @@ def get_ai_reply(
         sources = []
         
         for idx, chunk in enumerate(reranked_chunks):
-            context_parts.append(f"[Source {idx + 1}]: {chunk['text']}")
+            context_parts.append(f"[Source {idx + 1}]: {chunk.get('text', '')}")
             sources.append({
                 "filename": chunk["metadata"].get("filename", "Unknown"),
                 "page_number": chunk["metadata"].get("page_number"),
@@ -227,14 +229,14 @@ async def stream_ai_reply(
         rewritten_query = rewrite_query(user_message, conversation_id)
         
         # Retrieve and rerank chunks
-        retrieved_chunks = hybrid_search(rewritten_query, conversation_id)
-        reranked_chunks = rerank_chunks(rewritten_query, retrieved_chunks)
+        retrieved_chunks = await asyncio.to_thread(hybrid_search, rewritten_query, conversation_id)
+        reranked_chunks = await asyncio.to_thread(rerank_chunks, rewritten_query, retrieved_chunks)
         
         # Build context from chunks
         context_parts = []
         
         for idx, chunk in enumerate(reranked_chunks):
-            context_parts.append(f"[Source {idx + 1}]: {chunk['text']}")
+            context_parts.append(f"[Source {idx + 1}]: {chunk.get('text', '')}")
             sources.append({
                 "filename": chunk["metadata"].get("filename", "Unknown"),
                 "page_number": chunk["metadata"].get("page_number"),
@@ -293,7 +295,7 @@ async def stream_ai_reply(
                 chats_collection.insert_one({
                     "role": "assistant",
                     "reply": full_reply,
-                    'conversation_id': conversation_id,
+                    'conversation_id': ObjectId(conversation_id),
                     'created_at': datetime.now(timezone.utc)
                 })
             except Exception as db_error:
